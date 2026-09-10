@@ -1,5 +1,7 @@
 # meshagent-go
 
+[![LICENSE](https://img.shields.io/github/license/task-otter/Taskotter)](/LICENSE) [![codecov](https://codecov.io/gh/task-otter/Taskotter/graph/badge.svg)](https://codecov.io/gh/task-otter/Taskotter)
+
 Manage the official MeshCentral agent (MeshAgent) on Windows endpoints from Go:
 download it from your server, install it as a service, and start or stop it.
 
