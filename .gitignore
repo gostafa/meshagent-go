@@ -8,3 +8,4 @@ coverage.html
 .cursor
 test-result.txt
 junit.xml
+fmt.log

@@ -1,0 +1,11 @@
+# Normalize line endings so Windows CI checkout matches Unix (fmt:check).
+* text=auto eol=lf
+*.go text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf

@@ -36,6 +36,10 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Prefer LF checkouts on Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: git config --global core.autocrlf false
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
         with:
