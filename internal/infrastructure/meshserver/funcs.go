@@ -28,6 +28,9 @@ type (
 	// the documented exception, so the function travels as one.
 	chmodDownloadedError func(name string, mode os.FileMode) error
 
+	// createTempError carries the CreateTemp used by stage as an error value.
+	createTempError func(dir string, pattern string) (*os.File, error)
+
 	// renameDownloadedError carries the rename used by promote as an error value.
 	renameDownloadedError func(oldpath string, newpath string) error
 )
@@ -36,6 +39,9 @@ var (
 	// errChmodDownloaded holds the chmod used by promote. Tests replace it so
 	// the chmod error path runs on every GOOS.
 	errChmodDownloaded error = chmodDownloadedError(os.Chmod)
+	// errCreateTemp holds the CreateTemp used by stage. Tests replace it so the
+	// create-temp error path runs on every GOOS.
+	errCreateTemp error = createTempError(os.CreateTemp)
 	// errRenameDownloaded holds the rename used by promote. Tests replace it so
 	// the rename error path runs on every GOOS.
 	errRenameDownloaded error = renameDownloadedError(os.Rename)
@@ -91,7 +97,7 @@ func stage(destDir string) (*os.File, error) {
 		return nil, fmt.Errorf("meshserver: create destination directory: %w", err)
 	}
 
-	temp, err := os.CreateTemp(destDir, tempPattern)
+	temp, err := createTempFrom(errCreateTemp)(destDir, tempPattern)
 	if err != nil {
 		return nil, fmt.Errorf("meshserver: create temp file: %w", err)
 	}
@@ -282,6 +288,17 @@ func chmodFrom(err error) chmodDownloadedError {
 	return chmod
 }
 
+// createTempFrom unwraps the CreateTemp carried by err, falling back to
+// os.CreateTemp.
+func createTempFrom(err error) createTempError {
+	createTemp, ok := errors.AsType[createTempError](err)
+	if !ok {
+		return os.CreateTemp
+	}
+
+	return createTemp
+}
+
 // renameFrom unwraps the rename carried by err, falling back to os.Rename.
 func renameFrom(err error) renameDownloadedError {
 	rename, ok := errors.AsType[renameDownloadedError](err)
@@ -365,6 +382,16 @@ func (chmodDownloadedError) Error() string {
 
 // Unwrap terminates the error chain.
 func (chmodDownloadedError) Unwrap() error {
+	return nil
+}
+
+// Error implements the error interface for the CreateTemp carrier.
+func (createTempError) Error() string {
+	return "meshserver: create temp"
+}
+
+// Unwrap terminates the error chain.
+func (createTempError) Unwrap() error {
 	return nil
 }
 

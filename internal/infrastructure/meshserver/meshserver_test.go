@@ -277,15 +277,15 @@ func TestDownloadBadRequestURL(t *testing.T) {
 }
 
 func TestDownloadUncreatableTempFile(t *testing.T) {
-	// A read-only directory admits no temp file.
-	destDir := filepath.Join(t.TempDir(), "readonly")
-	if err := os.Mkdir(destDir, 0o500); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	orig := errCreateTemp
+	t.Cleanup(func() { errCreateTemp = orig })
+	errCreateTemp = createTempError(
+		func(string, string) (*os.File, error) { return nil, errTransport },
+	)
 
-	_, err := newClient(t, "https://mesh.invalid", nil).Download(t.Context(), destDir)
-	if err == nil {
-		t.Fatal("Download into a read-only directory returned nil error")
+	_, err := newClient(t, "https://mesh.invalid", nil).Download(t.Context(), t.TempDir())
+	if !errors.Is(err, errTransport) {
+		t.Fatalf("err = %v, want errTransport", err)
 	}
 }
 
@@ -386,18 +386,20 @@ func TestPromoteSucceeds(t *testing.T) {
 }
 
 func TestPromoteSeamsFallBackAndCarryErrors(t *testing.T) {
-	if chmodFrom(errTransport) == nil || renameFrom(errTransport) == nil {
-		t.Fatal("unrelated errors must still yield chmod and rename")
+	if chmodFrom(errTransport) == nil || renameFrom(errTransport) == nil ||
+		createTempFrom(errTransport) == nil {
+		t.Fatal("unrelated errors must still yield chmod, rename and createTemp")
 	}
 
 	chmod := chmodDownloadedError(os.Chmod)
 	rename := renameDownloadedError(os.Rename)
+	createTemp := createTempError(os.CreateTemp)
 
-	if chmod.Error() == "" || rename.Error() == "" {
+	if chmod.Error() == "" || rename.Error() == "" || createTemp.Error() == "" {
 		t.Error("Error() is empty")
 	}
 
-	if chmod.Unwrap() != nil || rename.Unwrap() != nil {
+	if chmod.Unwrap() != nil || rename.Unwrap() != nil || createTemp.Unwrap() != nil {
 		t.Error("Unwrap() did not terminate the chain")
 	}
 }
