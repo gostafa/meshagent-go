@@ -329,7 +329,9 @@ func TestPromoteFailures(t *testing.T) {
 
 			orig := errChmodDownloaded
 			t.Cleanup(func() { errChmodDownloaded = orig })
-			errChmodDownloaded = chmodDownloadedError(func(string, os.FileMode) error { return errTransport })
+			errChmodDownloaded = chmodDownloadedError(
+				func(string, os.FileMode) error { return errTransport },
+			)
 
 			return mustTemp(t), filepath.Join(t.TempDir(), "agent.exe")
 		},
@@ -343,7 +345,9 @@ func TestPromoteFailures(t *testing.T) {
 
 			orig := errRenameDownloaded
 			t.Cleanup(func() { errRenameDownloaded = orig })
-			errRenameDownloaded = renameDownloadedError(func(string, string) error { return errTransport })
+			errRenameDownloaded = renameDownloadedError(
+				func(string, string) error { return errTransport },
+			)
 
 			return mustTemp(t), filepath.Join(t.TempDir(), "agent.exe")
 		},
