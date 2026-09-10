@@ -39,6 +39,14 @@ linters:
           rules:
             - pattern: '**'
               min: 0.80
+            # RI = 0.30*C + 0.35*(1-K) + 0.20*T + 0.15*D, where K = CBO/(CBO+1)
+            # and T = 1/(1+max(0, AMC-1)). With perfect cohesion and docs, a type
+            # whose methods do ordinary error handling (AMC ~ 3, so T = 0.33) tops
+            # out at 0.517 + 0.35/(CBO+1) -- which only clears 0.80 at CBO = 0.
+            # Outbound adapters always hold at least one collaborator, so 0.80 is
+            # unreachable for them by construction rather than by sloppiness.
+            - pattern: '**/infrastructure/**'
+              min: 0.40
             - pattern: '**/*_test'
               min: 0.0
       vulner:
