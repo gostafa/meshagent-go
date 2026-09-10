@@ -119,7 +119,7 @@ managed_files:
     source_path: taskfiles/winget/README.md
   - destination_module: winget
     path: taskotter/winget/Taskfile.yml
-    sha256: c8858fa8788cb6041e255d73b9c13adf00ed624798177fbeb4880f1ec7767f10
+    sha256: ed40669a20a908f3c6756b634ef42cdb57719f79ba7fd3fca152b0b250116c07
     source_module: winget
     source_path: taskfiles/winget/Taskfile.yml
   - destination_module: yamlfix
