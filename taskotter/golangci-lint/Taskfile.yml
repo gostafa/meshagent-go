@@ -180,9 +180,18 @@ tasks:
     generates:
       - "{{.CUSTOM_GCL_BINARY}}"
     cmds:
-      - >-
-        bash -lc '{{.NIX_LOAD}};
-        {{if .GO_GLOBAL_BIN}}export PATH="{{.GO_GLOBAL_BIN}}:$PATH"; {{end}}golangci-lint custom -v'
+      - cmd: >-
+          bash -lc '{{.NIX_LOAD}};
+          {{if .GO_GLOBAL_BIN}}export PATH="{{.GO_GLOBAL_BIN}}:$PATH"; {{end}}golangci-lint custom -v'
+        platforms: [linux, darwin]
+      # WINGET_LOAD reloads Path after winget install in this Task process.
+      - cmd: >-
+          powershell -NoProfile -ExecutionPolicy Bypass -Command
+          "{{.WINGET_LOAD}};
+          \$ErrorActionPreference='Stop';
+          & golangci-lint custom -v;
+          exit \$LASTEXITCODE"
+        platforms: [windows]
 
   _lint:
     run: once
