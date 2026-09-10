@@ -99,9 +99,9 @@ tasks:
           powershell -NoProfile -ExecutionPolicy Bypass -Command
           "{{.WINGET_LOAD}};
           Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue;
-          zizmor {{if .CLI_ARGS}}{{.CLI_ARGS}}{{else}}
-            {{.ZIZMOR_EXTRA_ARGS}}
-            {{.ZIZMOR_TARGETS}}{{end}};
+          \$zArgs = '{{if .CLI_ARGS}}{{.CLI_ARGS}}{{else}}{{.ZIZMOR_EXTRA_ARGS}} {{.ZIZMOR_TARGETS}}{{end}}'.Trim().Split(' ',
+          [System.StringSplitOptions]::RemoveEmptyEntries);
+          & zizmor @zArgs;
           exit \$LASTEXITCODE"
         platforms: [windows]
 
