@@ -61,14 +61,15 @@ tasks:
           WINGET_INSTALLABLE: "{{.GO_WINGET_INSTALLABLE}}"
 
   install:pkg:
-    run: once
     desc: Install a Go package with go install (GO_PKG=module@version)
     summary: |
       Run go install GO_PKG to install a Go module binary onto GOPATH/bin.
       Pass GO_PKG as a module path with version, for example
       github.com/example/cmd@latest. Auto-installs Go if missing. On Windows,
       idempotently prepends $(go env GOPATH)\bin to the User Path when absent
-      so the installed binary is discoverable.
+      so the installed binary is discoverable. Must not use run: once: each
+      caller passes a different GO_PKG, and skipping the second call leaves
+      that package uninstalled.
     deps:
       - task: install
     requires:
@@ -79,17 +80,27 @@ tasks:
         msg: GO_PKG is required. Pass GO_PKG=module@version when running this task.
     cmds:
       - task: _install:pkg:unix
+        vars:
+          GO_PKG: "{{.GO_PKG}}"
       - task: _install:pkg:windows
+        vars:
+          GO_PKG: "{{.GO_PKG}}"
 
   _install:pkg:unix:
     internal: true
     platforms: [linux, darwin]
+    requires:
+      vars:
+        - GO_PKG
     cmds:
       - bash -lc '{{.NIX_LOAD}}; go install "{{.GO_PKG}}"'
 
   _install:pkg:windows:
     internal: true
     platforms: [windows]
+    requires:
+      vars:
+        - GO_PKG
     cmds:
       - go install "{{.GO_PKG}}"
       - >-
