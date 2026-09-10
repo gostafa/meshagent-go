@@ -222,10 +222,9 @@ tasks:
         & winget @wingetArgs;
         \$code = \$LASTEXITCODE;
         if (\$code -eq 0) { exit 0 };
-        \$hr = [uint32]\$code;
-        if (\$sub -eq 'install' -and (\$hr -eq [uint32]0x8A150061 -or \$hr -eq [uint32]0x8A15010D)) { exit 0 };
-        if (\$sub -eq 'upgrade' -and \$hr -eq [uint32]0x8A15002B) { exit 0 };
-        if (\$sub -eq 'uninstall' -and (\$hr -eq [uint32]0x8A150014 -or \$hr -eq [uint32]0x8A15002F)) { exit 0 };
+        if (\$sub -eq 'install' -and (\$code -eq -1978335135 -or \$code -eq -1978334963)) { exit 0 };
+        if (\$sub -eq 'upgrade' -and \$code -eq -1978335189) { exit 0 };
+        if (\$sub -eq 'uninstall' -and (\$code -eq -1978335212 -or \$code -eq -1978335185)) { exit 0 };
         exit \$code"
 
   _version:windows:
