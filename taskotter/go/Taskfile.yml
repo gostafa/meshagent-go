@@ -103,24 +103,25 @@ tasks:
         - GO_PKG
     cmds:
       - go install "{{.GO_PKG}}"
+      # \$ so Task's POSIX shell leaves literal $ for PowerShell.
       - >-
         powershell -NoProfile -ExecutionPolicy Bypass -Command
-        "$ErrorActionPreference = 'Stop';
-        $goBin = Join-Path ((go env GOPATH).Trim()) 'bin';
-        $userPath = [Environment]::GetEnvironmentVariable('Path', 'User');
-        if (-not $userPath) { $userPath = '' };
-        $normalized = $goBin.TrimEnd('\');
-        $found = $false;
-        foreach ($part in ($userPath -split ';')) {
-          if ($part -and $part.TrimEnd('\').Equals($normalized, [StringComparison]::OrdinalIgnoreCase)) {
-            $found = $true; break
+        "\$ErrorActionPreference = 'Stop';
+        \$goBin = Join-Path ((go env GOPATH).Trim()) 'bin';
+        \$userPath = [Environment]::GetEnvironmentVariable('Path', 'User');
+        if (-not \$userPath) { \$userPath = '' };
+        \$normalized = \$goBin.TrimEnd('\');
+        \$found = \$false;
+        foreach (\$part in (\$userPath -split ';')) {
+          if (\$part -and \$part.TrimEnd('\').Equals(\$normalized, [StringComparison]::OrdinalIgnoreCase)) {
+            \$found = \$true; break
           }
         };
-        if (-not $found) {
-          $newPath = if ($userPath) { ($goBin + ';' + $userPath) } else { $goBin };
-          [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+        if (-not \$found) {
+          \$newPath = if (\$userPath) { (\$goBin + ';' + \$userPath) } else { \$goBin };
+          [Environment]::SetEnvironmentVariable('Path', \$newPath, 'User')
         };
-        $env:Path = $goBin + ';' + $env:Path"
+        \$env:Path = \$goBin + ';' + \$env:Path"
 
   version:
     run: once
