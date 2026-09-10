@@ -16,9 +16,20 @@ vars:
   WINGET_SOURCE: '{{.WINGET_SOURCE | default "winget"}}'
   WINGET_EXTRA_ARGS: '{{.WINGET_EXTRA_ARGS | default ""}}'
   # \$ so Task's POSIX shell (mvdan/sh) leaves literal $ for PowerShell.
+  # Reload Machine/User Path so packages installed earlier in this Task process
+  # (winget updates the registry, not the parent env) are visible. Also ensure
+  # WindowsApps and WinGet Links are on PATH for winget and portable shims.
   WINGET_LOAD: >-
-    {{.WINGET_LOAD | default `\$wa = Join-Path \$env:LOCALAPPDATA 'Microsoft\WindowsApps';
-    if (Test-Path -LiteralPath \$wa) { \$env:Path = \$wa + ';' + \$env:Path }`}}
+    {{.WINGET_LOAD | default `
+    \$m = [Environment]::GetEnvironmentVariable('Path', 'Machine');
+    \$u = [Environment]::GetEnvironmentVariable('Path', 'User');
+    if (\$m) { \$env:Path = \$m + ';' + \$env:Path };
+    if (\$u) { \$env:Path = \$u + ';' + \$env:Path };
+    \$wa = Join-Path \$env:LOCALAPPDATA 'Microsoft\WindowsApps';
+    if (Test-Path -LiteralPath \$wa) { \$env:Path = \$wa + ';' + \$env:Path };
+    \$links = Join-Path \$env:LOCALAPPDATA 'Microsoft\WinGet\Links';
+    if (Test-Path -LiteralPath \$links) { \$env:Path = \$links + ';' + \$env:Path }
+    `}}
 
 tasks:
   default:
