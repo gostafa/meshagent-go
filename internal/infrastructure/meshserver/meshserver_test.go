@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -314,15 +315,37 @@ func TestPromoteFailures(t *testing.T) {
 		"chmod fails when the file is gone": func(t *testing.T) (*os.File, string) {
 			t.Helper()
 
+			if runtime.GOOS == "windows" {
+				t.Skip("unlinking an open file is unix-only")
+			}
+
 			temp := mustTemp(t)
 			_ = os.Remove(temp.Name())
 
 			return temp, filepath.Join(t.TempDir(), "agent.exe")
 		},
+		"chmod is refused": func(t *testing.T) (*os.File, string) {
+			t.Helper()
+
+			orig := errChmodDownloaded
+			t.Cleanup(func() { errChmodDownloaded = orig })
+			errChmodDownloaded = chmodDownloadedError(func(string, os.FileMode) error { return errTransport })
+
+			return mustTemp(t), filepath.Join(t.TempDir(), "agent.exe")
+		},
 		"rename fails into a missing directory": func(t *testing.T) (*os.File, string) {
 			t.Helper()
 
 			return mustTemp(t), filepath.Join(t.TempDir(), "absent", "agent.exe")
+		},
+		"rename is refused": func(t *testing.T) (*os.File, string) {
+			t.Helper()
+
+			orig := errRenameDownloaded
+			t.Cleanup(func() { errRenameDownloaded = orig })
+			errRenameDownloaded = renameDownloadedError(func(string, string) error { return errTransport })
+
+			return mustTemp(t), filepath.Join(t.TempDir(), "agent.exe")
 		},
 	}
 
@@ -349,8 +372,29 @@ func TestPromoteSucceeds(t *testing.T) {
 		t.Fatalf("stat target: %v", err)
 	}
 
-	if info.Mode().Perm() != exePerm {
+	if !info.Mode().IsRegular() {
+		t.Errorf("mode = %v, want a regular file", info.Mode())
+	}
+
+	if runtime.GOOS != "windows" && info.Mode().Perm() != exePerm {
 		t.Errorf("mode = %v, want %v", info.Mode().Perm(), os.FileMode(exePerm))
+	}
+}
+
+func TestPromoteSeamsFallBackAndCarryErrors(t *testing.T) {
+	if chmodFrom(errTransport) == nil || renameFrom(errTransport) == nil {
+		t.Fatal("unrelated errors must still yield chmod and rename")
+	}
+
+	chmod := chmodDownloadedError(os.Chmod)
+	rename := renameDownloadedError(os.Rename)
+
+	if chmod.Error() == "" || rename.Error() == "" {
+		t.Error("Error() is empty")
+	}
+
+	if chmod.Unwrap() != nil || rename.Unwrap() != nil {
+		t.Error("Unwrap() did not terminate the chain")
 	}
 }
 

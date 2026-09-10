@@ -22,12 +22,11 @@ type (
 	// Syscalls is the seam over the service control manager. Tests replace it
 	// to cover the error mapping without registering a real service.
 	Syscalls interface {
-		Open(name string, access uint32) (*mgr.Service, error)
 		Close(service *mgr.Service) error
-		Query(service *mgr.Service) (svc.Status, error)
-		Config(service *mgr.Service) (mgr.Config, error)
+		Control(service *mgr.Service, cmd svc.Cmd) error
+		Open(name string, access uint32) (*mgr.Service, error)
+		Snapshot(service *mgr.Service) (svc.Status, string, error)
 		Start(service *mgr.Service) error
-		Control(service *mgr.Service, cmd svc.Cmd) (svc.Status, error)
 	}
 
 	// Ops answers the agentservice.Ops and agentinstall.Locator seams.
@@ -36,14 +35,41 @@ type (
 		name  string
 	}
 
-	// realSyscalls talks to the actual service control manager.
-	realSyscalls struct{}
+	// kernel talks to the service control manager through injectable functions.
+	kernel struct {
+		openSCManager      func(machineName *uint16, databaseName *uint16, access uint32) (windows.Handle, error)
+		closeServiceHandle func(handle windows.Handle) error
+		utf16FromString    func(name string) (*uint16, error)
+		openWinService     func(manager windows.Handle, name *uint16, access uint32) (windows.Handle, error)
+		closeService       func(service *mgr.Service) error
+		queryService       func(service *mgr.Service) (svc.Status, error)
+		configService      func(service *mgr.Service) (mgr.Config, error)
+		startService       func(service *mgr.Service, args ...string) error
+		controlService     func(service *mgr.Service, cmd svc.Cmd) (svc.Status, error)
+	}
+)
+
+const (
+	emptyPath            = ""
+	errInstalled         = "winscm: installed: %w"
+	errOpen              = "winscm: open: %w"
+	errStatus            = "winscm: status: %w"
+	quoteMark            = `"`
+	spaceSep             = " "
+	stateContinuePending = "continue pending"
+	statePausePending    = "pause pending"
+	statePaused          = "paused"
+	stateRunning         = "running"
+	stateStartPending    = "start pending"
+	stateStopPending     = "stop pending"
+	stateStopped         = "stopped"
+	stateUnknown         = "unknown"
 )
 
 // New returns an Ops for the named service backed by the real service control
 // manager.
 func New(name string) *Ops {
-	return &Ops{calls: realSyscalls{}, name: name}
+	return NewWith(liveKernel(), name)
 }
 
 // NewWith returns an Ops backed by the given seam. It exists so tests can
@@ -52,9 +78,160 @@ func NewWith(calls Syscalls, name string) *Ops {
 	return &Ops{calls: calls, name: name}
 }
 
+// ExecutableFrom extracts the executable path from a service's registered
+// command line, which may be quoted and may carry arguments.
+func ExecutableFrom(commandLine string) string {
+	trimmed := strings.TrimSpace(commandLine)
+	if trimmed == emptyPath {
+		return emptyPath
+	}
+
+	if strings.HasPrefix(trimmed, quoteMark) {
+		return quotedExecutable(trimmed)
+	}
+
+	return unquotedExecutable(trimmed)
+}
+
+// absentOrError maps a failed open onto a nil error when the service is absent.
+func absentOrError(err error) error {
+	if err == nil || errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		return nil
+	}
+
+	return fmt.Errorf("winscm: open service: %w", err)
+}
+
+// describe assembles the reported status from a snapshot.
+func describe(state svc.State, path string) lifecycle.Status {
+	return lifecycle.Status{
+		Installed:  true,
+		Running:    state == svc.Running,
+		State:      stateName(state),
+		BinaryPath: path,
+	}
+}
+
+// emptyStatus is the report for a service that is not registered.
+func emptyStatus() lifecycle.Status {
+	return lifecycle.Status{
+		State:      emptyPath,
+		BinaryPath: emptyPath,
+		Installed:  false,
+		Running:    false,
+	}
+}
+
+// firstToken drops trailing command-line arguments from a cut executable path.
+func firstToken(inner, tail string) string {
+	return strings.TrimSuffix(inner+tail, tail)
+}
+
+// liveKernel wires the Windows service control manager entry points.
+func liveKernel() *kernel {
+	return &kernel{
+		openSCManager:      windows.OpenSCManager,
+		closeServiceHandle: windows.CloseServiceHandle,
+		utf16FromString:    windows.UTF16PtrFromString,
+		openWinService:     windows.OpenService,
+		closeService:       (*mgr.Service).Close,
+		queryService:       (*mgr.Service).Query,
+		configService:      (*mgr.Service).Config,
+		startService:       (*mgr.Service).Start,
+		controlService:     (*mgr.Service).Control,
+	}
+}
+
+// notInstalledOrError maps a failed open onto the module's sentinel.
+func notInstalledOrError(err error, name string) error {
+	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		return fmt.Errorf("winscm: %q: %w", name, agenterr.ErrNotInstalled)
+	}
+
+	return fmt.Errorf("winscm: open %q: %w", name, err)
+}
+
+// quotedExecutable reads the path out of a quoted command line.
+func quotedExecutable(commandLine string) string {
+	rest := strings.TrimPrefix(commandLine, quoteMark)
+
+	inner, tail, found := strings.Cut(rest, quoteMark)
+	if found {
+		return firstToken(inner, tail)
+	}
+
+	return inner
+}
+
+// stateName renders a Windows service state as a lowercase name.
+func stateName(state svc.State) string {
+	names := map[svc.State]string{
+		svc.Stopped:         stateStopped,
+		svc.StartPending:    stateStartPending,
+		svc.StopPending:     stateStopPending,
+		svc.Running:         stateRunning,
+		svc.ContinuePending: stateContinuePending,
+		svc.PausePending:    statePausePending,
+		svc.Paused:          statePaused,
+	}
+
+	name, known := names[state]
+	if !known {
+		return stateUnknown
+	}
+
+	return name
+}
+
+// unquotedExecutable reads the first token of an unquoted command line.
+func unquotedExecutable(commandLine string) string {
+	inner, tail, found := strings.Cut(commandLine, spaceSep)
+	if found {
+		return firstToken(inner, tail)
+	}
+
+	return inner
+}
+
+// Installed answers the agentinstall.Locator seam.
+func (ops *Ops) Installed(ctx context.Context) (lifecycle.Status, error) {
+	err := ctx.Err()
+	if err != nil {
+		return lifecycle.Status{}, fmt.Errorf(errInstalled, err)
+	}
+
+	status, statusErr := ops.Status(ops.name)
+	if statusErr != nil {
+		return lifecycle.Status{}, fmt.Errorf(errInstalled, statusErr)
+	}
+
+	return status, nil
+}
+
 // Name reports the service this Ops drives.
 func (ops *Ops) Name() string {
 	return ops.name
+}
+
+// Start starts the service. An already-running service is not an error.
+func (ops *Ops) Start(name string) error {
+	service, err := ops.calls.Open(name, windows.SERVICE_START|windows.SERVICE_QUERY_STATUS)
+	if err != nil {
+		return fmt.Errorf("winscm: start: %w", notInstalledOrError(err, name))
+	}
+
+	defer ops.discard(service)
+
+	err = ops.calls.Start(service)
+	if errors.Is(err, windows.ERROR_SERVICE_ALREADY_RUNNING) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("winscm: start %q: %w", name, err)
+	}
+
+	return nil
 }
 
 // Status reports the current state of the service.
@@ -63,72 +240,39 @@ func (ops *Ops) Name() string {
 // error, so callers can tell "absent" from "unreadable".
 func (ops *Ops) Status(name string) (lifecycle.Status, error) {
 	service, err := ops.calls.Open(name, windows.SERVICE_QUERY_STATUS|windows.SERVICE_QUERY_CONFIG)
-	if err != nil {
-		return absentOrError(err)
-	}
-	defer ops.discard(service)
 
-	state, err := ops.calls.Query(service)
-	if err != nil {
-		return lifecycle.Status{}, fmt.Errorf("winscm: query %q: %w", name, err)
+	mapped := absentOrError(err)
+	if mapped != nil {
+		return lifecycle.Status{}, fmt.Errorf(errStatus, mapped)
 	}
 
-	return ops.describe(service, state), nil
-}
-
-// Installed answers the agentinstall.Locator seam.
-func (ops *Ops) Installed(ctx context.Context) (lifecycle.Status, error) {
-	err := ctx.Err()
-	if err != nil {
-		return lifecycle.Status{}, fmt.Errorf("winscm: installed: %w", err)
+	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		return emptyStatus(), nil
 	}
 
-	return ops.Status(ops.name)
-}
-
-// describe assembles the reported status, treating an unreadable configuration
-// as a missing path rather than a failure.
-func (ops *Ops) describe(service *mgr.Service, state svc.Status) lifecycle.Status {
-	status := lifecycle.Status{
-		Installed: true,
-		Running:   state.State == svc.Running,
-		State:     stateName(state.State),
+	status, loadErr := ops.loadedStatus(service, name)
+	if loadErr != nil {
+		return lifecycle.Status{}, fmt.Errorf(errStatus, loadErr)
 	}
 
-	config, err := ops.calls.Config(service)
-	if err == nil {
-		status.BinaryPath = ExecutableFrom(config.BinaryPathName)
-	}
-
-	return status
-}
-
-// Start starts the service. An already-running service is not an error.
-func (ops *Ops) Start(name string) error {
-	service, err := ops.calls.Open(name, windows.SERVICE_START|windows.SERVICE_QUERY_STATUS)
-	if err != nil {
-		return notInstalledOrError(err, name)
-	}
-	defer ops.discard(service)
-
-	err = ops.calls.Start(service)
-	if err != nil && !errors.Is(err, windows.ERROR_SERVICE_ALREADY_RUNNING) {
-		return fmt.Errorf("winscm: start %q: %w", name, err)
-	}
-
-	return nil
+	return status, nil
 }
 
 // Stop asks the service to stop. An already-stopped service is not an error.
 func (ops *Ops) Stop(name string) error {
 	service, err := ops.calls.Open(name, windows.SERVICE_STOP|windows.SERVICE_QUERY_STATUS)
 	if err != nil {
-		return notInstalledOrError(err, name)
+		return fmt.Errorf("winscm: stop: %w", notInstalledOrError(err, name))
 	}
+
 	defer ops.discard(service)
 
-	_, err = ops.calls.Control(service, svc.Stop)
-	if err != nil && !errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
+	err = ops.calls.Control(service, svc.Stop)
+	if errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
+		return nil
+	}
+
+	if err != nil {
 		return fmt.Errorf("winscm: stop %q: %w", name, err)
 	}
 
@@ -144,73 +288,21 @@ func (ops *Ops) discard(service *mgr.Service) {
 	}
 }
 
-// absentOrError maps a failed open onto a zero status or a real error.
-func absentOrError(err error) (lifecycle.Status, error) {
-	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
-		return lifecycle.Status{}, nil
-	}
+// loadedStatus snapshots an opened service and always closes it.
+func (ops *Ops) loadedStatus(service *mgr.Service, name string) (lifecycle.Status, error) {
+	defer ops.discard(service)
 
-	return lifecycle.Status{}, fmt.Errorf("winscm: open service: %w", err)
-}
-
-// notInstalledOrError maps a failed open onto the module's sentinel.
-func notInstalledOrError(err error, name string) error {
-	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
-		return fmt.Errorf("winscm: %q: %w", name, agenterr.ErrNotInstalled)
-	}
-
-	return fmt.Errorf("winscm: open %q: %w", name, err)
-}
-
-// stateName renders a Windows service state as a lowercase name.
-func stateName(state svc.State) string {
-	names := map[svc.State]string{
-		svc.Stopped:         "stopped",
-		svc.StartPending:    "start pending",
-		svc.StopPending:     "stop pending",
-		svc.Running:         "running",
-		svc.ContinuePending: "continue pending",
-		svc.PausePending:    "pause pending",
-		svc.Paused:          "paused",
-	}
-
-	name, known := names[state]
-	if !known {
-		return "unknown"
-	}
-
-	return name
-}
-
-// Open opens the service with exactly the rights the caller needs.
-//
-// The manager is opened with SC_MANAGER_CONNECT rather than full access so
-// that read-only operations work without an elevated process. Closing the
-// manager handle does not invalidate the service handle it returned.
-func (realSyscalls) Open(name string, access uint32) (*mgr.Service, error) {
-	manager, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	state, path, err := ops.calls.Snapshot(service)
 	if err != nil {
-		return nil, fmt.Errorf("winscm: open service control manager: %w", err)
+		return lifecycle.Status{}, fmt.Errorf("winscm: query %q: %w", name, err)
 	}
 
-	defer func() { _ = windows.CloseServiceHandle(manager) }()
-
-	wide, err := windows.UTF16PtrFromString(name)
-	if err != nil {
-		return nil, fmt.Errorf("winscm: invalid service name %q: %w", name, err)
-	}
-
-	handle, err := windows.OpenService(manager, wide, access)
-	if err != nil {
-		return nil, fmt.Errorf("winscm: open service %q: %w", name, err)
-	}
-
-	return &mgr.Service{Name: name, Handle: handle}, nil
+	return describe(state.State, path), nil
 }
 
 // Close releases a service handle.
-func (realSyscalls) Close(service *mgr.Service) error {
-	err := service.Close()
+func (api *kernel) Close(service *mgr.Service) error {
+	err := api.closeService(service)
 	if err != nil {
 		return fmt.Errorf("winscm: close service: %w", err)
 	}
@@ -218,29 +310,50 @@ func (realSyscalls) Close(service *mgr.Service) error {
 	return nil
 }
 
-// Query reads the service state.
-func (realSyscalls) Query(service *mgr.Service) (svc.Status, error) {
-	state, err := service.Query()
+// Control sends a control code to the service.
+func (api *kernel) Control(service *mgr.Service, cmd svc.Cmd) error {
+	status, err := api.controlService(service, cmd)
 	if err != nil {
-		return svc.Status{}, fmt.Errorf("winscm: query service: %w", err)
+		return fmt.Errorf("winscm: control service: %w", err)
 	}
 
-	return state, nil
+	label := stateName(status.State)
+
+	return map[string]error{label: nil}[label]
 }
 
-// Config reads the service configuration.
-func (realSyscalls) Config(service *mgr.Service) (mgr.Config, error) {
-	config, err := service.Config()
+// Open opens the service with exactly the rights the caller needs.
+func (api *kernel) Open(name string, access uint32) (service *mgr.Service, err error) {
+	manager, err := api.connectManager()
 	if err != nil {
-		return mgr.Config{}, fmt.Errorf("winscm: read service config: %w", err)
+		return nil, fmt.Errorf(errOpen, err)
 	}
 
-	return config, nil
+	defer func() {
+		service, err = api.afterOpen(*manager, service, err)
+	}()
+
+	service, err = api.openService(*manager, name, access)
+	if err != nil {
+		return nil, fmt.Errorf(errOpen, err)
+	}
+
+	return service, nil
+}
+
+// Snapshot reads the service state and executable path.
+func (api *kernel) Snapshot(service *mgr.Service) (svc.Status, string, error) {
+	state, err := api.queryService(service)
+	if err != nil {
+		return svc.Status{}, emptyPath, fmt.Errorf("winscm: query service: %w", err)
+	}
+
+	return state, api.binaryPath(service), nil
 }
 
 // Start starts the service.
-func (realSyscalls) Start(service *mgr.Service) error {
-	err := service.Start()
+func (api *kernel) Start(service *mgr.Service) error {
+	err := api.startService(service)
 	if err != nil {
 		return fmt.Errorf("winscm: start service: %w", err)
 	}
@@ -248,45 +361,69 @@ func (realSyscalls) Start(service *mgr.Service) error {
 	return nil
 }
 
-// Control sends a control code to the service.
-func (realSyscalls) Control(service *mgr.Service, cmd svc.Cmd) (svc.Status, error) {
-	state, err := service.Control(cmd)
+// abandon closes a service handle opened before the manager handle failed.
+func (api *kernel) abandon(service *mgr.Service) {
+	closeErr := api.Close(service)
+	if closeErr != nil {
+		return
+	}
+}
+
+// afterOpen closes the manager handle and keeps the first useful error.
+func (api *kernel) afterOpen(
+	manager windows.Handle,
+	service *mgr.Service,
+	result error,
+) (*mgr.Service, error) {
+	closeErr := api.closeServiceHandle(manager)
+	if closeErr == nil && result == nil {
+		return service, nil
+	}
+
+	if result != nil {
+		return nil, fmt.Errorf(errOpen, result)
+	}
+
+	api.abandon(service)
+
+	return nil, fmt.Errorf("winscm: close service control manager: %w", closeErr)
+}
+
+// binaryPath reads the registered executable, treating config failure as empty.
+func (api *kernel) binaryPath(service *mgr.Service) string {
+	config, err := api.configService(service)
 	if err != nil {
-		return svc.Status{}, fmt.Errorf("winscm: control service: %w", err)
+		return emptyPath
 	}
 
-	return state, nil
+	return ExecutableFrom(config.BinaryPathName)
 }
 
-// ExecutableFrom extracts the executable path from a service's registered
-// command line, which may be quoted and may carry arguments.
-func ExecutableFrom(commandLine string) string {
-	trimmed := strings.TrimSpace(commandLine)
-	if trimmed == "" {
-		return ""
+// connectManager opens the service control manager with connect rights.
+func (api *kernel) connectManager() (*windows.Handle, error) {
+	manager, err := api.openSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	if err != nil {
+		return nil, fmt.Errorf("winscm: open service control manager: %w", err)
 	}
 
-	if strings.HasPrefix(trimmed, `"`) {
-		return quotedExecutable(trimmed)
-	}
-
-	// Unquoted paths containing spaces are ambiguous by definition. MeshAgent
-	// registers a quoted path, so treating the first token as the executable is
-	// the sane reading of the remaining cases.
-	first, _, found := strings.Cut(trimmed, " ")
-	if found {
-		return first
-	}
-
-	return trimmed
+	return &manager, nil
 }
 
-// quotedExecutable reads the path out of a quoted command line.
-func quotedExecutable(commandLine string) string {
-	inner, _, found := strings.Cut(commandLine[1:], `"`)
-	if found {
-		return inner
+// openService opens the named service on an already-connected manager.
+func (api *kernel) openService(
+	manager windows.Handle,
+	name string,
+	access uint32,
+) (*mgr.Service, error) {
+	wide, err := api.utf16FromString(name)
+	if err != nil {
+		return nil, fmt.Errorf("winscm: invalid service name %q: %w", name, err)
 	}
 
-	return strings.Trim(commandLine, `"`)
+	handle, err := api.openWinService(manager, wide, access)
+	if err != nil {
+		return nil, fmt.Errorf("winscm: open service %q: %w", name, err)
+	}
+
+	return &mgr.Service{Name: name, Handle: handle}, nil
 }

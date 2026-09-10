@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -337,13 +338,21 @@ func TestConnectWithBadServerURLIsAUsageError(t *testing.T) {
 }
 
 func TestBuiltAgentDrivesTheRealClient(t *testing.T) {
-	// With no injected agent the real client is built and used; off Windows
-	// the service operations refuse, which is the expected exit.
+	// With no injected agent the real client is built and used. Off Windows
+	// the service operations refuse; on Windows Status of an absent service
+	// succeeds, or SCM itself errors.
 	runner := &Runner{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
 
 	code := runner.Run([]string{cmdStatus, "-service-name", service})
-	if code != ExitError {
-		t.Errorf("code = %d, want ExitError from an unsupported platform", code)
+	switch runtime.GOOS {
+	case "windows":
+		if code != ExitOK && code != ExitError {
+			t.Errorf("code = %d, want ExitOK or a real SCM error", code)
+		}
+	default:
+		if code != ExitError {
+			t.Errorf("code = %d, want ExitError from an unsupported platform", code)
+		}
 	}
 }
 
@@ -379,9 +388,18 @@ func TestEmptyServiceNameIsAUsageError(t *testing.T) {
 	}
 }
 
+func unusableTemp(t *testing.T) {
+	t.Helper()
+
+	const nowhere = `Z:\nonexistent-meshagent-staging`
+	t.Setenv("TMPDIR", nowhere)
+	t.Setenv("TMP", nowhere)
+	t.Setenv("TEMP", nowhere)
+}
+
 func TestStagingFailsWhenTempIsUnusable(t *testing.T) {
 	// Point the temp directory at something that cannot hold one.
-	t.Setenv("TMPDIR", "/nonexistent-meshagent-staging")
+	unusableTemp(t)
 
 	if _, _, err := staging(emptyValue); err == nil {
 		t.Error("staging succeeded with an unusable temp directory")
@@ -389,7 +407,7 @@ func TestStagingFailsWhenTempIsUnusable(t *testing.T) {
 }
 
 func TestConnectStagingFailure(t *testing.T) {
-	t.Setenv("TMPDIR", "/nonexistent-meshagent-staging")
+	unusableTemp(t)
 
 	runner, _, _ := newRunner(&fakeAgent{status: meshagent.Status{Installed: false}})
 

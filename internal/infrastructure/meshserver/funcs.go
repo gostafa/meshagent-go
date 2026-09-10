@@ -21,6 +21,26 @@ import (
 	"github.com/gostafa/meshagent-go/internal/shared/meshpath"
 )
 
+type (
+	// chmodDownloadedError carries the chmod used by promote as an error value.
+	//
+	// Package-level state is otherwise refused, and err-prefixed variables are
+	// the documented exception, so the function travels as one.
+	chmodDownloadedError func(name string, mode os.FileMode) error
+
+	// renameDownloadedError carries the rename used by promote as an error value.
+	renameDownloadedError func(oldpath string, newpath string) error
+)
+
+var (
+	// errChmodDownloaded holds the chmod used by promote. Tests replace it so
+	// the chmod error path runs on every GOOS.
+	errChmodDownloaded error = chmodDownloadedError(os.Chmod)
+	// errRenameDownloaded holds the rename used by promote. Tests replace it so
+	// the rename error path runs on every GOOS.
+	errRenameDownloaded error = renameDownloadedError(os.Rename)
+)
+
 // New returns a Client for cfg.
 func New(cfg *Config) *Client {
 	return cfg.client()
@@ -252,6 +272,26 @@ func invalidBinary(err error, magic []byte) error {
 	return fmt.Errorf("meshserver: read response body: %w", err)
 }
 
+// chmodFrom unwraps the chmod carried by err, falling back to os.Chmod.
+func chmodFrom(err error) chmodDownloadedError {
+	chmod, ok := errors.AsType[chmodDownloadedError](err)
+	if !ok {
+		return os.Chmod
+	}
+
+	return chmod
+}
+
+// renameFrom unwraps the rename carried by err, falling back to os.Rename.
+func renameFrom(err error) renameDownloadedError {
+	rename, ok := errors.AsType[renameDownloadedError](err)
+	if !ok {
+		return os.Rename
+	}
+
+	return rename
+}
+
 // promote closes temp, marks it executable and moves it onto target.
 func promote(temp *os.File, target string) error {
 	err := temp.Close()
@@ -261,12 +301,12 @@ func promote(temp *os.File, target string) error {
 
 	// #nosec G302 -- the agent is an executable and must carry the execute bit;
 	// 0700 keeps it owner-only, which is the tightest workable mode.
-	err = os.Chmod(temp.Name(), exePerm)
+	err = chmodFrom(errChmodDownloaded)(temp.Name(), exePerm)
 	if err != nil {
 		return fmt.Errorf("meshserver: chmod downloaded binary: %w", err)
 	}
 
-	err = os.Rename(temp.Name(), target)
+	err = renameFrom(errRenameDownloaded)(temp.Name(), target)
 	if err != nil {
 		return fmt.Errorf("meshserver: move downloaded binary into place: %w", err)
 	}
@@ -315,5 +355,25 @@ func drainClose(body io.ReadCloser) error {
 		return fmt.Errorf("meshserver: close response body: %w", closeErr)
 	}
 
+	return nil
+}
+
+// Error implements the error interface for the chmod carrier.
+func (chmodDownloadedError) Error() string {
+	return "meshserver: chmod downloaded"
+}
+
+// Unwrap terminates the error chain.
+func (chmodDownloadedError) Unwrap() error {
+	return nil
+}
+
+// Error implements the error interface for the rename carrier.
+func (renameDownloadedError) Error() string {
+	return "meshserver: rename downloaded"
+}
+
+// Unwrap terminates the error chain.
+func (renameDownloadedError) Unwrap() error {
 	return nil
 }

@@ -223,6 +223,68 @@ func TestEveryMethodDelegates(t *testing.T) {
 	}
 }
 
+var errPort = errors.New("port refused")
+
+// failingPorts satisfies every port the Client delegates to, so the error
+// wrap of each method is reachable without a server or a service manager.
+type failingPorts struct{}
+
+func (failingPorts) Download(context.Context, string) (string, error) {
+	return "", errPort
+}
+
+func (failingPorts) Settings(context.Context) (artifact.Settings, error) {
+	return nil, errPort
+}
+
+func (failingPorts) Install(context.Context, string) error { return errPort }
+func (failingPorts) Uninstall(context.Context) error       { return errPort }
+func (failingPorts) Connect(context.Context) error         { return errPort }
+func (failingPorts) Disconnect(context.Context) error      { return errPort }
+
+func (failingPorts) Status(context.Context) (lifecycle.Status, error) {
+	return lifecycle.Status{}, errPort
+}
+
+func TestEveryMethodWrapsPortErrors(t *testing.T) {
+	ports := failingPorts{}
+	client := &Client{ports: &agentports.Ports{
+		Downloader:  ports,
+		Settings:    ports,
+		Installer:   ports,
+		Controller:  ports,
+		ServiceName: DefaultServiceName,
+	}}
+
+	path, err := client.Download(t.Context(), t.TempDir())
+	if path != "" || !errors.Is(err, errPort) {
+		t.Errorf("Download = %q, %v", path, err)
+	}
+
+	settings, err := client.Settings(t.Context())
+	if settings != nil || !errors.Is(err, errPort) {
+		t.Errorf("Settings = %v, %v", settings, err)
+	}
+
+	status, err := client.Status(t.Context())
+	if status != (Status{}) || !errors.Is(err, errPort) {
+		t.Errorf("Status = %+v, %v", status, err)
+	}
+
+	errs := map[string]error{
+		"Install":    client.Install(t.Context(), "agent.exe"),
+		"Uninstall":  client.Uninstall(t.Context()),
+		"Connect":    client.Connect(t.Context()),
+		"Disconnect": client.Disconnect(t.Context()),
+	}
+
+	for name, opErr := range errs {
+		if !errors.Is(opErr, errPort) {
+			t.Errorf("%s: %v", name, opErr)
+		}
+	}
+}
+
 func TestDownloadAndSettingsReachTheServer(t *testing.T) {
 	cfg := valid()
 	// A server that cannot be resolved makes both operations fail in the
