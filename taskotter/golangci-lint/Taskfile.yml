@@ -216,17 +216,19 @@ tasks:
           "$lint_binary" run {{.GO_LINT_FIX}} {{.GO_LINT_ARGS}}
           GCL_LINT_EOF
         platforms: [linux, darwin]
+      # Same indent + \$ so >- folds to one line and $ survives Task's shell.
       - cmd: >-
-          powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $lintBinary =
-          'golangci-lint'; if ('{{.CUSTOM_GCL_ENABLED}}' -eq 'true') {
-
-            $lintBinary = '{{.CUSTOM_GCL_BINARY}}'; if (-not [System.IO.Path]::IsPathRooted($lintBinary)) {
-
-              $lintBinary = Join-Path (Get-Location) $lintBinary;
-            }
-          }; & $lintBinary run
-            {{.GO_LINT_FIX}}
-            {{.GO_LINT_ARGS}}; exit $LASTEXITCODE"
+          powershell -NoProfile -ExecutionPolicy Bypass -Command
+          "\$ErrorActionPreference='Stop';
+          \$lintBinary = 'golangci-lint';
+          if ('{{.CUSTOM_GCL_ENABLED}}' -eq 'true') {
+          \$lintBinary = '{{.CUSTOM_GCL_BINARY}}';
+          if (-not [System.IO.Path]::IsPathRooted(\$lintBinary)) {
+          \$lintBinary = Join-Path (Get-Location) \$lintBinary;
+          }
+          };
+          & \$lintBinary run {{.GO_LINT_FIX}} {{.GO_LINT_ARGS}};
+          exit \$LASTEXITCODE"
         platforms: [windows]
 
   _fmt:
@@ -242,12 +244,10 @@ tasks:
             {{.GO_FMT_TARGETS}}'
         platforms: [linux, darwin]
       - cmd: >-
-          powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop';
-            & golangci-lint fmt
-              {{.GO_FMT_DIFF}}
-              {{.GOLANGCI_LINT_FMT_FORMATTER_FLAGS}}
-              {{.GO_FMT_TARGETS}};
-            exit $LASTEXITCODE"
+          powershell -NoProfile -ExecutionPolicy Bypass -Command
+          "\$ErrorActionPreference='Stop';
+          & golangci-lint fmt {{.GO_FMT_DIFF}} {{.GOLANGCI_LINT_FMT_FORMATTER_FLAGS}} {{.GO_FMT_TARGETS}};
+          exit \$LASTEXITCODE"
         platforms: [windows]
 
   _version:unix:
