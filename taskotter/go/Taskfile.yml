@@ -23,6 +23,19 @@ vars:
   GO_FUZZTIME: '{{.GO_FUZZTIME | default ""}}'
 
   GO_PKG: '{{.GO_PKG | default ""}}'
+  # \$ so Task's POSIX shell (mvdan/sh) leaves literal $ for PowerShell.
+  # Reload User Path (install:pkg writes GOPATH\bin there) and prepend
+  # GOPATH\bin so go-installed tools from earlier in this Task process are
+  # visible to later PowerShell cmds.
+  GO_LOAD: >-
+    {{.GO_LOAD | default `
+    \$u = [Environment]::GetEnvironmentVariable('Path', 'User');
+    if (\$u) { \$env:Path = \$u + ';' + \$env:Path };
+    if (Get-Command go -ErrorAction SilentlyContinue) {
+      \$goBin = Join-Path ((go env GOPATH).Trim()) 'bin';
+      if (Test-Path -LiteralPath \$goBin) { \$env:Path = \$goBin + ';' + \$env:Path }
+    }
+    `}}
 
 tasks:
   default:
