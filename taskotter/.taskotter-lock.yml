@@ -1,7 +1,7 @@
 ---
 configuration:
   includes_doc: true
-  node_package_manager: ''
+  node_package_manager: ""
   sync_root: true
   target_folder: taskotter
   tasks:
@@ -79,7 +79,7 @@ managed_files:
     source_path: taskfiles/golangci-lint/README.md
   - destination_module: golangci-lint
     path: taskotter/golangci-lint/Taskfile.yml
-    sha256: c8e9ab2d44e213462bcca377d6780debed4d30a10b9d88b8a220b0b63e3eaa51
+    sha256: 7179e1f5ddffa9974af3ce598fd97627a0edc89f64346f005660e246893d8c16
     source_module: golangci-lint
     source_path: taskfiles/golangci-lint/Taskfile.yml
   - destination_module: govulncheck
@@ -119,7 +119,7 @@ managed_files:
     source_path: taskfiles/winget/README.md
   - destination_module: winget
     path: taskotter/winget/Taskfile.yml
-    sha256: ed40669a20a908f3c6756b634ef42cdb57719f79ba7fd3fca152b0b250116c07
+    sha256: c8858fa8788cb6041e255d73b9c13adf00ed624798177fbeb4880f1ec7767f10
     source_module: winget
     source_path: taskfiles/winget/Taskfile.yml
   - destination_module: yamlfix
